@@ -54,6 +54,13 @@ class ModelParams(ParamGroup):
         self._white_background = False
         self.data_device = "cuda"
         self.eval = False
+        self.load2gpu_on_the_fly = False
+        self.is_blender = False
+        self.is_6dof = False
+        
+        ## SADG's implementation
+        self.load_mask_on_the_fly = False
+        self.load_image_on_the_fly = False
         super().__init__(parser, "Loading Parameters", sentinel)
 
     def extract(self, args):

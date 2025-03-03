@@ -34,7 +34,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
             pre_mask=None,
             seg_rgb=False,          # render cluster rgb, not feat
             post_process=False,     # post
-            root_num=64, leaf_num=10):  # k1, k2 
+            root_num=64, leaf_num=10, d_xyz=0.0, d_rotation=0.0, d_scaling=0.0, mask=None):  # k1, k2 
     """
     Render the scene. 
     
@@ -69,7 +69,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
 
     rasterizer = GaussianRasterizer(raster_settings=raster_settings)
 
-    means3D = pc.get_xyz
+    means3D = pc.get_xyz + d_xyz
     means2D = screenspace_points
     opacity = pc.get_opacity
 
@@ -81,8 +81,8 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     if pipe.compute_cov3D_python:
         cov3D_precomp = pc.get_covariance(scaling_modifier)
     else:
-        scales = pc.get_scaling
-        rotations = pc.get_rotation
+        scales = pc.get_scaling + d_scaling
+        rotations = pc.get_rotation + d_rotation
 
     # If precomputed colors are provided, use them. Otherwise, if it is desired to precompute colors
     # from SHs in Python, do it. If not, then SH -> RGB conversion will be done by rasterizer.
@@ -100,6 +100,20 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     else:
         colors_precomp = override_color
 
+    if mask is not None:
+        means3D = means3D[mask]
+        means2D = means2D[mask]
+        opacity = opacity[mask]
+        if colors_precomp is not None:
+            colors_precomp = colors_precomp[mask]
+        else:
+            shs = shs[mask]
+        # shs_features = shs_features[mask]
+        scales = scales[mask]
+        rotations = rotations[mask]
+        if cov3D_precomp is not None:
+            cov3D_precomp = cov3D_precomp[mask]
+            
     if render_color:
         rendered_image, radii, rendered_depth, rendered_alpha = rasterizer(
             means3D = means3D,
@@ -125,6 +139,8 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     if render_feat_map:
         # get feature
         ins_feat = (pc.get_ins_feat(origin=origin_feat) + 1) / 2   # pseudo -> norm, else -> raw
+        if mask is not None:
+            ins_feat = ins_feat[mask]
         # first three channels
         rendered_ins_feat, _, _, _ = rasterizer(
             means3D = means3D,

@@ -16,7 +16,7 @@ from random import randint
 from utils.loss_utils import l1_loss, ssim, l2_loss
 from gaussian_renderer import render, network_gui
 import sys
-from scene import Scene, GaussianModel
+from scene import Scene, GaussianModel, DeformModel
 from utils.general_utils import safe_state
 import uuid
 from tqdm import tqdm
@@ -155,16 +155,19 @@ def separation_loss(feat_mean_stack, iteration):
     return loss
 
 def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, \
-             checkpoint, debug_from):
+             checkpoint, debug_from, load_iteration):
     iterations = [opt.start_ins_feat_iter, opt.start_leaf_cb_iter, opt.start_root_cb_iter]
     saving_iterations.extend(iterations)
     checkpoint_iterations.extend(iterations)
 
-    first_iter = 0
+    first_iter = load_iteration
     tb_writer = prepare_output_and_logger(dataset)
     gaussians = GaussianModel(dataset.sh_degree)
-    scene = Scene(dataset, gaussians)
+    scene = Scene(dataset, gaussians, load_iteration=load_iteration)
     gaussians.training_setup(opt)
+    ## Deformation model
+    deform = DeformModel()
+    deform.load_weights(dataset.model_path, iteration=load_iteration)
     if checkpoint:
         (model_params, first_iter) = torch.load(checkpoint)
         # NOTE: Load the original 3DGS pre-trained checkpoint and add the ins_feat attribute. [OpenGaussian]
@@ -301,7 +304,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                                           cluster_indices=cluster_indices, mode=cb_mode,
                                           root_num=opt.root_node_num, leaf_num=opt.leaf_node_num,
                                           sam_level=opt.sam_level,
-                                          save_memory=opt.save_memory)
+                                          save_memory=opt.save_memory, deform=deform)
                 if not viewpoint_cam.data_on_gpu:
                     viewpoint_cam.to_gpu()
                 if cb_mode == "leaf":
@@ -348,13 +351,19 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         else:
             rescale=False
 
+        fid = viewpoint_cam.fid
+        N = gaussians.get_xyz.shape[0]
+        time_input = fid.unsqueeze(0).expand(N, -1)
+        d_xyz, d_rotation, d_scaling = deform.step(gaussians.get_xyz.detach(), time_input)
+
         render_pkg = render(viewpoint_cam, gaussians, pipe, bg, iteration,
                             rescale=rescale,                # wherther to re-scale the gaussian scale
                             cluster_idx=cluster_indices,    # coarse-level cluster id
                             leaf_cluster_idx=ins_feat_codebook.leaf_cls_ids,    # fine-level cluster id
                             render_feat_map=render_feat, 
                             render_cluster=render_cluster,
-                            selected_root_id=root_id)       # coarse id (stage 2.2)
+                            selected_root_id=root_id,
+                            d_xyz=d_xyz, d_rotation=d_rotation, d_scaling=d_scaling)       # coarse id (stage 2.2)
         # rendered results
         image, viewspace_point_tensor, visibility_filter, radii = \
             render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
@@ -548,7 +557,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                     scene.save(iteration, ["ins_feat"])
                 else:
                     scene.save(iteration)
-
+                deform.save_weights(args.model_path, iteration)
             # Densification
             if iteration < opt.densify_until_iter and \
                 not opt.frozen_init_pts: # note: ScanNet dataset is not densified [OpenGaussian]
@@ -587,7 +596,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                                           cluster_indices=leaf_cluster_indices, mode="lang",
                                           root_num=opt.root_node_num, leaf_num=opt.leaf_node_num,
                                           sam_level=opt.sam_level,
-                                          save_memory=opt.save_memory)
+                                          save_memory=opt.save_memory, deform=deform)
         
         # note: save memory (only stage 2, 3)
         if viewpoint_cam.data_on_gpu and opt.save_memory and cb_mode is not None:
@@ -621,7 +630,7 @@ def construct_pseudo_ins_feat(scene : Scene, renderFunc, renderArgs,
                             mode="root",            # root, leaf, lang
                             root_num=64, leaf_num=10,   # k1, k2
                             sam_level=3,
-                            save_memory=False):
+                            save_memory=False, deform=None):
     torch.cuda.empty_cache()
     # ##############################################################################################
     # [Stage 2.1, 2.2] Render all training views once to construct pseudo-instance feature labels. #
@@ -632,9 +641,12 @@ def construct_pseudo_ins_feat(scene : Scene, renderFunc, renderArgs,
     for idx, view in enumerate(tqdm(sorted_train_cameras, desc="construt pseudo feat")):
         if not view.data_on_gpu:
             view.to_gpu()
-
+        fid = view.fid
+        N = scene.gaussians.get_xyz.shape[0]
+        time_input = fid.unsqueeze(0).expand(N, -1)
+        d_xyz, d_rotation, d_scaling = deform.step(scene.gaussians.get_xyz.detach(), time_input)
         # render
-        render_pkg = renderFunc(view, scene.gaussians, *renderArgs, rescale=False, origin_feat=True)
+        render_pkg = renderFunc(view, scene.gaussians, *renderArgs, rescale=False, origin_feat=True, d_xyz=d_xyz, d_rotation=d_rotation, d_scaling=d_scaling)
         rendered_ins_feat = render_pkg["ins_feat"]
         
         # get gt sam mask
@@ -711,9 +723,13 @@ def construct_pseudo_ins_feat(scene : Scene, renderFunc, renderArgs,
         for idx, view in enumerate(tqdm(sorted_train_cameras, desc="render coarse-level cluster")):
             if not view.data_on_gpu:
                 view.to_gpu()
+            fid = view.fid
+            N = scene.gaussians.get_xyz.shape[0]
+            time_input = fid.unsqueeze(0).expand(N, -1)
+            d_xyz, d_rotation, d_scaling = deform.step(scene.gaussians.get_xyz.detach(), time_input)
             render_pkg = renderFunc(view, scene.gaussians, *renderArgs, cluster_idx=cluster_indices, rescale=False,\
                                     render_feat_map=False, render_cluster=True, origin_feat=True, better_vis=True,
-                                    root_num=root_num, leaf_num=leaf_num)
+                                    root_num=root_num, leaf_num=leaf_num, d_xyz=d_xyz, d_rotation=d_rotation, d_scaling=d_scaling)
             rendered_cluster_imgs = render_pkg["cluster_imgs"]  # coarse cluster feature map
             rendered_cluster_silhouettes = render_pkg["cluster_silhouettes"] # coarse cluster mask
             cluster_occur = render_pkg["cluster_occur"] # bool [k1] Whether coarse clusters visible in the current view
@@ -804,12 +820,15 @@ def construct_pseudo_ins_feat(scene : Scene, renderFunc, renderArgs,
             for v_id, view in enumerate(sorted_train_cameras):
                 if not view.data_on_gpu:
                     view.to_gpu()
-
+                fid = view.fid
+                N = scene.gaussians.get_xyz.shape[0]
+                time_input = fid.unsqueeze(0).expand(N, -1)
+                d_xyz, d_rotation, d_scaling = deform.step(scene.gaussians.get_xyz.detach(), time_input)
                 # (0) render
                 render_pkg = renderFunc(view, scene.gaussians, *renderArgs, leaf_cluster_idx=cluster_indices, rescale=False,\
                                         render_feat_map=False, render_cluster=True, origin_feat=True, better_vis=False,\
                                         selected_root_id=root_id,\
-                                        root_num=root_num, leaf_num=leaf_num)
+                                        root_num=root_num, leaf_num=leaf_num, d_xyz=d_xyz, d_rotation=d_rotation, d_scaling=d_scaling)
                 rendered_leaf_cluster_imgs = render_pkg["leaf_clusters_imgs"]   # all fine-level clusters of the root_id-th coarse-level.
                 rendered_leaf_cluster_silhouettes = render_pkg["leaf_cluster_silhouettes"]
                 occured_leaf_id = render_pkg["occured_leaf_id"]
@@ -910,7 +929,7 @@ def construct_pseudo_ins_feat(scene : Scene, renderFunc, renderArgs,
                                     leaf_ind=cluster_indices.cpu().numpy())
 
 def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_iterations, \
-    start_root_cb_iter, scene : Scene, renderFunc, renderArgs):
+    start_root_cb_iter, scene : Scene, renderFunc, renderArgs, deform):
     if tb_writer:
         tb_writer.add_scalar('train_loss_patches/l1_loss', Ll1.item(), iteration)
         tb_writer.add_scalar('train_loss_patches/total_loss', loss.item(), iteration)
@@ -927,7 +946,11 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_i
                 l1_test = 0.0
                 psnr_test = 0.0
                 for idx, viewpoint in enumerate(config['cameras']):
-                    image = torch.clamp(renderFunc(viewpoint, scene.gaussians, *renderArgs)["render"], 0.0, 1.0)
+                    fid = viewpoint.fid
+                    N = scene.gaussians.get_xyz.shape[0]
+                    time_input = fid.unsqueeze(0).expand(N, -1)
+                    d_xyz, d_rotation, d_scaling = deform.step(scene.gaussians.get_xyz.detach(), time_input)
+                    image = torch.clamp(renderFunc(viewpoint, scene.gaussians, *renderArgs, d_xyz=d_xyz, d_rotation=d_rotation, d_scaling=d_scaling)["render"], 0.0, 1.0)
                     gt_image = torch.clamp(viewpoint.original_image.to("cuda"), 0.0, 1.0)
                     if tb_writer and (idx < 5):
                         tb_writer.add_images(config['name'] + "_view_{}/render".format(viewpoint.image_name), image[None], global_step=iteration)
@@ -997,6 +1020,7 @@ if __name__ == "__main__":
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[])
     parser.add_argument("--start_checkpoint", type=str, default = None)
+    parser.add_argument('--load_iteration', type=int, default=-1)
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
     args.checkpoint_iterations.append(args.iterations)
@@ -1011,7 +1035,7 @@ if __name__ == "__main__":
     torch.autograd.set_detect_anomaly(args.detect_anomaly)
     training(lp.extract(args), op.extract(args), pp.extract(args), \
              args.test_iterations, args.save_iterations, args.checkpoint_iterations, \
-             args.start_checkpoint, args.debug_from)
+             args.start_checkpoint, args.debug_from, args.load_iteration)
 
     # All done
     print("\nTraining complete.")

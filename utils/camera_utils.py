@@ -14,7 +14,7 @@ import numpy as np
 from utils.general_utils import PILtoTorch
 from utils.graphics_utils import fov2focal
 import torch
-
+import json
 WARNED = False
 
 def loadCam(args, id, cam_info, resolution_scale):
@@ -71,7 +71,7 @@ def loadCam(args, id, cam_info, resolution_scale):
                   cx=cam_info.cx/args.resolution, cy=cam_info.cy/args.resolution,
                   image=gt_image, depth=None, gt_alpha_mask=loaded_mask,
                   gt_sam_mask=gt_sam_mask, gt_mask_feat=mask_feat,
-                  image_name=cam_info.image_name, uid=id, data_device=args.data_device)
+                  image_name=cam_info.image_name, uid=id, data_device=args.data_device, fid=cam_info.fid)
 
 def cameraList_from_camInfos(cam_infos, resolution_scale, args):
     camera_list = []
@@ -102,3 +102,25 @@ def camera_to_JSON(id, camera : Camera):
         'fx' : fov2focal(camera.FovX, camera.width)
     }
     return camera_entry
+
+def camera_nerfies_from_JSON(path, scale):
+    """Loads a JSON camera into memory."""
+    with open(path, 'r') as fp:
+        camera_json = json.load(fp)
+
+    # Fix old camera JSON.
+    if 'tangential' in camera_json:
+        camera_json['tangential_distortion'] = camera_json['tangential']
+
+    return dict(
+        orientation=np.array(camera_json['orientation']),
+        position=np.array(camera_json['position']),
+        focal_length=camera_json['focal_length'] * scale,
+        principal_point=np.array(camera_json['principal_point']) * scale,
+        skew=camera_json['skew'],
+        pixel_aspect_ratio=camera_json['pixel_aspect_ratio'],
+        radial_distortion=np.array(camera_json['radial_distortion']),
+        tangential_distortion=np.array(camera_json['tangential_distortion']),
+        image_size=np.array((int(round(camera_json['image_size'][0] * scale)),
+                             int(round(camera_json['image_size'][1] * scale)))),
+    )

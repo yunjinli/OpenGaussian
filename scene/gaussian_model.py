@@ -205,12 +205,12 @@ class GaussianModel:
         self.denom = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
 
         l = [
-            {'params': [self._xyz], 'lr': training_args.position_lr_init * self.spatial_lr_scale, "name": "xyz"},
-            {'params': [self._features_dc], 'lr': training_args.feature_lr, "name": "f_dc"},
-            {'params': [self._features_rest], 'lr': training_args.feature_lr / 20.0, "name": "f_rest"},
-            {'params': [self._opacity], 'lr': training_args.opacity_lr, "name": "opacity"},
-            {'params': [self._scaling], 'lr': training_args.scaling_lr, "name": "scaling"},
-            {'params': [self._rotation], 'lr': training_args.rotation_lr, "name": "rotation"},
+            # {'params': [self._xyz], 'lr': training_args.position_lr_init * self.spatial_lr_scale, "name": "xyz"},
+            # {'params': [self._features_dc], 'lr': training_args.feature_lr, "name": "f_dc"},
+            # {'params': [self._features_rest], 'lr': training_args.feature_lr / 20.0, "name": "f_rest"},
+            # {'params': [self._opacity], 'lr': training_args.opacity_lr, "name": "opacity"},
+            # {'params': [self._scaling], 'lr': training_args.scaling_lr, "name": "scaling"},
+            # {'params': [self._rotation], 'lr': training_args.rotation_lr, "name": "rotation"},
             {'params': [self._ins_feat], 'lr': training_args.ins_feat_lr, "name": "ins_feat"}  # modify -----
         ]
 
@@ -297,12 +297,18 @@ class GaussianModel:
         xyz = np.stack((np.asarray(plydata.elements[0]["x"]),
                         np.asarray(plydata.elements[0]["y"]),
                         np.asarray(plydata.elements[0]["z"])),  axis=1)
-        ins_feat = np.stack((np.asarray(plydata.elements[0]["ins_feat_r"]),
-                        np.asarray(plydata.elements[0]["ins_feat_g"]),
-                        np.asarray(plydata.elements[0]["ins_feat_b"]),
-                        np.asarray(plydata.elements[0]["ins_feat_r2"]),
-                        np.asarray(plydata.elements[0]["ins_feat_g2"]),
-                        np.asarray(plydata.elements[0]["ins_feat_b2"])),  axis=1)
+        try:
+            ins_feat = np.stack((np.asarray(plydata.elements[0]["ins_feat_r"]),
+                            np.asarray(plydata.elements[0]["ins_feat_g"]),
+                            np.asarray(plydata.elements[0]["ins_feat_b"]),
+                            np.asarray(plydata.elements[0]["ins_feat_r2"]),
+                            np.asarray(plydata.elements[0]["ins_feat_g2"]),
+                            np.asarray(plydata.elements[0]["ins_feat_b2"])),  axis=1)
+        except:
+            print("[WARNING] Random initialization...")
+            ins_feat = np.random.randn(xyz.shape[0], 6)
+
+            
         opacities = np.asarray(plydata.elements[0]["opacity"])[..., np.newaxis]
         if not opacities.flags['C_CONTIGUOUS']:
             opacities = np.ascontiguousarray(opacities)

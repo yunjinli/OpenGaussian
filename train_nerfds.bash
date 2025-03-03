@@ -1,0 +1,1 @@
+python train.py -s /mnt/sda/4dgsam_data/NeRF-DS/as_novel_view -m /mnt/sda/4dgsam_output/OpenGaussian/NeRF-DS/as_novel_view_new_corr --load_iteration 20000 --start_ins_feat_iter 20000 --start_root_cb_iter 30000 --start_leaf_cb_iter 50000 --root_node_num 8 --leaf_node_num 4 --eval --iterations 70000
