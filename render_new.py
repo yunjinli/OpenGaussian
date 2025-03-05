@@ -124,6 +124,7 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
     # render
     for idx, view in enumerate(tqdm(views, desc="Rendering progress")):
         fid = view.fid
+        # print(fid)
         xyz = gaussians.get_xyz
         time_input = fid.unsqueeze(0).expand(xyz.shape[0], -1)
         d_xyz, d_rotation, d_scaling = deform.step(xyz.detach(), time_input)

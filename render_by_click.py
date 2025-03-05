@@ -26,8 +26,6 @@ from PIL import Image
 import json
 from utils.opengs_utlis import mask_feature_mean, get_SAM_mask_and_feat, load_code_book
 import pytorch3d.ops
-from scene import DeformModel
-
 
 np.random.seed(42)
 colors_defined = np.random.randint(100, 256, size=(300, 3))
@@ -60,8 +58,8 @@ def get_pixel_values(image_path, position, radius=10):
 
 def compute_click_values(model_path, image_name, pix_xy, radius=5):
     def compute_level_click_val(iter, model_path, image_name, pix_xy, radius):
-        img_path1 = f"{model_path}/test/ours_{iter}/renders_ins_feat1/{image_name}.png"
-        img_path2 = f"{model_path}/test/ours_{iter}/renders_ins_feat2/{image_name}.png"
+        img_path1 = f"{model_path}/train/ours_{iter}/renders_ins_feat1/{image_name}_1.png"
+        img_path2 = f"{model_path}/train/ours_{iter}/renders_ins_feat2/{image_name}_2.png"
         val1 = get_pixel_values(img_path1, pix_xy, radius)
         val2 = get_pixel_values(img_path2, pix_xy, radius)
         click_val = (torch.tensor(list(val1) + list(val2)) / 255) * 2 - 1
@@ -72,23 +70,19 @@ def compute_click_values(model_path, image_name, pix_xy, radius=5):
     
     return level1_click_val, level2_click_val
 
-def render_set(model_path, name, iteration, views, gaussians, pipeline, background, deform):
+def render_set(model_path, name, iteration, views, gaussians, pipeline, background):
     render_path = os.path.join(model_path, name, "ours_{}".format(iteration), "renders")
     gts_path = os.path.join(model_path, name, "ours_{}".format(iteration), "gt")
-    segment_objects_path = os.path.join(model_path, name, "ours_{}".format(iteration), "segment_objects")
-    pred_masks_path = os.path.join(model_path, name, "ours_{}".format(iteration), "pred_masks")
-    # render_ins_feat_path = os.path.join(model_path, name, "ours_{}".format(iteration), "renders_ins_feat")
-    # gt_sam_mask_path = os.path.join(model_path, name, "ours_{}".format(iteration), "gt_sam_mask")
-    # pseudo_ins_feat_path = os.path.join(model_path, name, "ours_{}".format(iteration), "pseudo_ins_feat")
 
-    
+    render_ins_feat_path = os.path.join(model_path, name, "ours_{}".format(iteration), "renders_ins_feat")
+    gt_sam_mask_path = os.path.join(model_path, name, "ours_{}".format(iteration), "gt_sam_mask")
+    pseudo_ins_feat_path = os.path.join(model_path, name, "ours_{}".format(iteration), "pseudo_ins_feat")
+
     makedirs(render_path, exist_ok=True)
     makedirs(gts_path, exist_ok=True)
-    # makedirs(render_ins_feat_path, exist_ok=True)
-    # makedirs(gt_sam_mask_path, exist_ok=True)
-    # makedirs(pseudo_ins_feat_path, exist_ok=True)
-    makedirs(segment_objects_path, exist_ok=True)
-    makedirs(pred_masks_path, exist_ok=True)
+    makedirs(render_ins_feat_path, exist_ok=True)
+    makedirs(gt_sam_mask_path, exist_ok=True)
+    makedirs(pseudo_ins_feat_path, exist_ok=True)
 
     # load codebook
     root_code_book, root_cluster_indices = load_code_book(os.path.join(model_path, "point_cloud", \
@@ -101,16 +95,16 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
 
     # load the saved codebook(leaf id) and instance-level language feature
     # 'leaf_feat', 'leaf_acore', 'occu_count', 'leaf_ind'       leaf_figurines_cluster_lang
-    # mapping_file = os.path.join(model_path, "cluster_lang.npz")
-    # saved_data = np.load(mapping_file)
-    # leaf_lang_feat = torch.from_numpy(saved_data["leaf_feat.npy"]).cuda()    # [num_leaf=640, 512] 每个实例的语言特征
-    # leaf_score = torch.from_numpy(saved_data["leaf_score.npy"]).cuda()       # [num_leaf=640] 每个实例的得分
-    # leaf_occu_count = torch.from_numpy(saved_data["occu_count.npy"]).cuda()  # [num_leaf=640] 每个实例在视图中出现的次数
-    # leaf_ind = torch.from_numpy(saved_data["leaf_ind.npy"]).cuda()           # [num_pts] 每个点云对应的实例 id
-    # leaf_lang_feat[leaf_occu_count < 5] *= 0.0      # 出现次数太少的聚类不考虑
-    # leaf_cluster_indices = leaf_ind
+    mapping_file = os.path.join(model_path, "cluster_lang.npz")
+    saved_data = np.load(mapping_file)
+    leaf_lang_feat = torch.from_numpy(saved_data["leaf_feat.npy"]).cuda()    # [num_leaf=640, 512] 每个实例的语言特征
+    leaf_score = torch.from_numpy(saved_data["leaf_score.npy"]).cuda()       # [num_leaf=640] 每个实例的得分
+    leaf_occu_count = torch.from_numpy(saved_data["occu_count.npy"]).cuda()  # [num_leaf=640] 每个实例在视图中出现的次数
+    leaf_ind = torch.from_numpy(saved_data["leaf_ind.npy"]).cuda()           # [num_pts] 每个点云对应的实例 id
+    leaf_lang_feat[leaf_occu_count < 5] *= 0.0      # 出现次数太少的聚类不考虑
+    leaf_cluster_indices = leaf_ind
     
-    image_name = "00000"
+    image_name = "frame_00002"
     # # object_name = "apple"
     # pix_xy = (450, 217) # bag of cookies
     # pix_xy = (344, 350) # apple
@@ -122,20 +116,16 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
     #                 (468, 288), (438, 273), (309, 308), (343, 361),
     #                 (578, 274), (571, 260), (565, 380)]
     # figurines   image_name = "frame_00002"
-    # object_names = ["rubber duck with buoy", "porcelain hand", "miffy", "toy elephant", "toy cat statue", \
-    #                 "jake", "Play-Doh bucket", "rubber duck with hat", "rubics cube", "waldo", \
-    #                 "twizzlers", "red toy chair", "green toy chair", "pink ice cream", "spatula", \
-    #                 "pikachu", "green apple", "rabbit", "old camera", "pumpkin", \
-    #                 "tesla door handle"]
-    if args.points is not None:
-        pix_xy_list = [eval(point) for point in args.points] if args.points is not None else None
-    else:
-        pix_xy_list = None
-    # pix_xy_list = [ (103, 378), (552, 390), (896, 342), (720, 257), (254, 297),
-    #                 (451, 197), (626, 256), (760, 166), (781, 243), (896, 136),
-    #                 (927, 241), (688, 148), (538, 160), (565, 238), (575, 257),
-    #                 (377, 156), (156, 244), (21, 237), (283, 152), (330, 200),
-    #                 (514, 200)]
+    object_names = ["rubber duck with buoy", "porcelain hand", "miffy", "toy elephant", "toy cat statue", \
+                    "jake", "Play-Doh bucket", "rubber duck with hat", "rubics cube", "waldo", \
+                    "twizzlers", "red toy chair", "green toy chair", "pink ice cream", "spatula", \
+                    "pikachu", "green apple", "rabbit", "old camera", "pumpkin", \
+                    "tesla door handle"]
+    pix_xy_list = [ (103, 378), (552, 390), (896, 342), (720, 257), (254, 297),
+                    (451, 197), (626, 256), (760, 166), (781, 243), (896, 136),
+                    (927, 241), (688, 148), (538, 160), (565, 238), (575, 257),
+                    (377, 156), (156, 244), (21, 237), (283, 152), (330, 200),
+                    (514, 200)]
     # # ramen           image_name = "frame_00002"
     # object_names = ["clouth", "sake cup", "chopsticks", "spoon", "plate", \
     #                 "bowl", "egg", "nori", "glass of water", "napkin"]
@@ -147,11 +137,8 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
     # pix_xy_list = [(439, 76), (410, 297), (306, 127), (349, 182), (261, 256),
     #                (201, 262), (161, 267), (80, 34), (17, 141), (76, 169)]
 
-    # for o_i, object in enumerate(object_names):
-    pre_pts_mask_final = None
-    all_click_leaf_indices = []
-    for p_i, pix_xy in enumerate(pix_xy_list):
-        # pix_xy = pix_xy_list[o_i]
+    for o_i, object in enumerate(object_names):
+        pix_xy = pix_xy_list[o_i]
         root_click_val, leaf_click_val = compute_click_values(model_path, image_name, pix_xy)
     
         # 计算离两层码本最近的聚类
@@ -174,8 +161,6 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
         #     click_leaf_indices = torch.argmin(distances_leaf_sub).unsqueeze(0)
         # (2) 先定位 root 码本，再找到内部最接近的 1 个叶子节点
         click_leaf_indices = torch.argmin(distances_leaf_sub).unsqueeze(0) + start_id
-        # print(click_leaf_indices)
-        all_click_leaf_indices.append(click_leaf_indices)
         # (3) 直接找最小的子节点，不准确
         # click_leaf_indices = torch.argmin(distances_leaf).unsqueeze(0)
         # # (4) 直接指定子节点
@@ -183,11 +168,8 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
         
         # 获得子节点对应的mask
         pre_pts_mask = (leaf_cluster_indices.unsqueeze(1) == click_leaf_indices.cuda()).any(dim=1)
-        # print(pre_pts_mask)
-        # print(pre_pts_mask.shape)
 
         # post process  modify-----
-        # post_process = True
         post_process = True
         max_time = 5
         if post_process and max_time > 0:
@@ -207,11 +189,7 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
             if pre_pts_mask is not None:
                 pre_pts_mask[pre_pts_mask != 0] = mask
             max_time -= 1
-            
-        if pre_pts_mask_final is None:
-            pre_pts_mask_final = pre_pts_mask
-        else:
-            pre_pts_mask_final |= pre_pts_mask
+
         # out_dir = "ca9c2998-e"
         # splits = ["train", "train", "train", "train", "test"]
         # frame_name_list = ["frame_00053", "frame_00066", "frame_00140", "frame_00154", "frame_00089"]
@@ -240,84 +218,68 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
         #         shutil.copy2(ori_img_name, new_name)
 
         # render
-    print("Selected cls: ", all_click_leaf_indices)
-    for idx, view in enumerate(tqdm(views, desc="Rendering progress")):
-        # render_pkg = render(view, gaussians, pipeline, background, iteration, rescale=False)
-        
-        # # figurines
-        # if  view.image_name not in ["frame_00041", "frame_00105", "frame_00152", "frame_00195"]:
-        #     continue
-        # # teatime
-        # if  view.image_name not in ["frame_00002", "frame_00025", "frame_00043", "frame_00107", "frame_00129", "frame_00140"]:
-        #     continue
-        # # ramen
-        # if  view.image_name not in ["frame_00006", "frame_00024", "frame_00060", "frame_00065", "frame_00081", "frame_00119", "frame_00128"]:
-        #     continue
-        # # waldo_kitchen
-        # if  view.image_name not in ["frame_00053", "frame_00066", "frame_00089", "frame_00140", "frame_00154"]:
-        #     continue
-        fid = view.fid
-        xyz = gaussians.get_xyz
-        time_input = fid.unsqueeze(0).expand(xyz.shape[0], -1)
-        d_xyz, d_rotation, d_scaling = deform.step(xyz.detach(), time_input)
-        # print(torch.stack(all_click_leaf_indices))
-        # NOTE 再走一遍 render，以进行聚类，并对聚类可视化【不需要可以注释掉】--------------
-        render_pkg = render(view, gaussians, pipeline, background, iteration,
-                            rescale=False,                #)  # wherther to re-scale the gaussian scale
-                            # cluster_idx=leaf_cluster_indices,     # root id 注释掉
-                            leaf_cluster_idx=leaf_cluster_indices,            # leaf id               一起出现
-                            # selected_leaf_id=click_leaf_indices.cuda(),       # 选择出的 leaf id       一起出现
-                            selected_leaf_id=torch.stack(all_click_leaf_indices).squeeze(-1).cuda(),       # 选择出的 leaf id       一起出现
-                            render_feat_map=True, 
-                            render_cluster=False,
-                            better_vis=True,
-                            # pre_mask=pre_pts_mask,
-                            pre_mask=pre_pts_mask_final,
-                            seg_rgb=True,
-                            d_xyz=d_xyz, d_rotation=d_rotation, d_scaling=d_scaling)
-        rendering = render_pkg["render"]
-        rendered_cluster_imgs = render_pkg["leaf_clusters_imgs"]
-        occured_leaf_id = render_pkg["occured_leaf_id"]
-        rendered_leaf_cluster_silhouettes = render_pkg["leaf_cluster_silhouettes"]
+        for idx, view in enumerate(tqdm(views, desc="Rendering progress")):
+            # render_pkg = render(view, gaussians, pipeline, background, iteration, rescale=False)
+            
+            # # figurines
+            # if  view.image_name not in ["frame_00041", "frame_00105", "frame_00152", "frame_00195"]:
+            #     continue
+            # # teatime
+            # if  view.image_name not in ["frame_00002", "frame_00025", "frame_00043", "frame_00107", "frame_00129", "frame_00140"]:
+            #     continue
+            # # ramen
+            # if  view.image_name not in ["frame_00006", "frame_00024", "frame_00060", "frame_00065", "frame_00081", "frame_00119", "frame_00128"]:
+            #     continue
+            # # waldo_kitchen
+            # if  view.image_name not in ["frame_00053", "frame_00066", "frame_00089", "frame_00140", "frame_00154"]:
+            #     continue
 
-        # save Rendered RGB
-        torchvision.utils.save_image(rendering, os.path.join(render_path, view.image_name + ".png"))
+            # NOTE 再走一遍 render，以进行聚类，并对聚类可视化【不需要可以注释掉】--------------
+            render_pkg = render(view, gaussians, pipeline, background, iteration,
+                                rescale=False,                #)  # wherther to re-scale the gaussian scale
+                                # cluster_idx=leaf_cluster_indices,     # root id 注释掉
+                                leaf_cluster_idx=leaf_cluster_indices,            # leaf id               一起出现
+                                selected_leaf_id=click_leaf_indices.cuda(),       # 选择出的 leaf id       一起出现
+                                render_feat_map=True, 
+                                render_cluster=False,
+                                better_vis=True,
+                                pre_mask=pre_pts_mask,
+                                seg_rgb=True)
+            rendering = render_pkg["render"]
+            rendered_cluster_imgs = render_pkg["leaf_clusters_imgs"]
+            occured_leaf_id = render_pkg["occured_leaf_id"]
+            rendered_leaf_cluster_silhouettes = render_pkg["leaf_cluster_silhouettes"]
 
-        # render_cluster_path = os.path.join(model_path, name, "ours_{}".format(iteration), "click_cluster")
-        # render_cluster_silhouette_path = os.path.join(model_path, name, "ours_{}".format(iteration), "click_cluster_mask")
-        # makedirs(render_cluster_path, exist_ok=True)
-        # makedirs(render_cluster_silhouette_path, exist_ok=True)
-        
-        # for i, img in enumerate(rendered_cluster_imgs):
-        # print(len(rendered_cluster_imgs))
-        torchvision.utils.save_image(rendered_cluster_imgs[0][:3,:,:], os.path.join(segment_objects_path, '{0:05d}'.format(idx) + ".png"))
-        # 保存 mask
-        cluster_silhouette = rendered_leaf_cluster_silhouettes[0] > 0.8
-        # buffer_image[buffer_image < 0.5] = 0
-        # buffer_image[buffer_image != 0] = 1
-        # print(cluster_silhouette.shape)
-        # print(cluster_silhouette)
-        # torchvision.utils.save_image(cluster_silhouette.to(torch.float32), os.path.join(pred_masks_path, '{0:05d}'.format(idx) + ".png"))
-        torchvision.utils.save_image(cluster_silhouette.unsqueeze(0).expand(3, -1, -1).to(torch.float32), os.path.join(pred_masks_path, '{0:05d}'.format(idx) + ".png"))
-        # a = 0
-        # # 聚类 -----------------------------------------------
+            # save Rendered RGB
+            torchvision.utils.save_image(rendering, os.path.join(render_path, view.image_name + ".png"))
+
+            render_cluster_path = os.path.join(model_path, name, "ours_{}".format(iteration), "click_cluster")
+            render_cluster_silhouette_path = os.path.join(model_path, name, "ours_{}".format(iteration), "click_cluster_mask")
+            makedirs(render_cluster_path, exist_ok=True)
+            makedirs(render_cluster_silhouette_path, exist_ok=True)
+            for i, img in enumerate(rendered_cluster_imgs):
+                torchvision.utils.save_image(img[:3,:,:], os.path.join(render_cluster_path, \
+                    view.image_name + f"_{object}_cluster_{occured_leaf_id[i]}.png"))
+                # 保存 mask
+                cluster_silhouette = rendered_leaf_cluster_silhouettes[i] > 0.8
+                torchvision.utils.save_image(cluster_silhouette.to(torch.float32), os.path.join(render_cluster_silhouette_path, \
+                    view.image_name + f"_{object}_cluster_{occured_leaf_id[i]}.png"))
+            # a = 0
+            # # 聚类 -----------------------------------------------
 
 def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParams, skip_train : bool, skip_test : bool):
     with torch.no_grad():
         gaussians = GaussianModel(dataset.sh_degree)
         scene = Scene(dataset, gaussians, load_iteration=iteration, shuffle=False)
 
-        deform = DeformModel()
-        deform.load_weights(dataset.model_path, iteration=iteration)
-        
         bg_color = [1,1,1] if dataset.white_background else [0, 0, 0]
         background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
 
         if not skip_train:
-             render_set(dataset.model_path, "train", scene.loaded_iter, scene.getTrainCameras(), gaussians, pipeline, background, deform)
+             render_set(dataset.model_path, "train", scene.loaded_iter, scene.getTrainCameras(), gaussians, pipeline, background)
 
         if not skip_test:
-             render_set(dataset.model_path, "test", scene.loaded_iter, scene.getTestCameras(), gaussians, pipeline, background, deform)
+             render_set(dataset.model_path, "test", scene.loaded_iter, scene.getTestCameras(), gaussians, pipeline, background)
 
 if __name__ == "__main__":
     # Set up command line argument parser
@@ -328,8 +290,6 @@ if __name__ == "__main__":
     parser.add_argument("--skip_train", action="store_true")
     parser.add_argument("--skip_test", action="store_true")
     parser.add_argument("--quiet", action="store_true")
-    parser.add_argument('--points', nargs='+', default=None)
-    
     args = get_combined_args(parser)
     print("Rendering " + args.model_path)
 

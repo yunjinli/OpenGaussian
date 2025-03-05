@@ -431,7 +431,8 @@ def readNerfiesCameras(path, load_image_on_the_fly=False, load_mask_on_the_fly=F
         
         width = image.size[0]
         height = image.size[1]
-        
+        # print('width:', width)
+        # print('height:', height)
         cx = image.size[0] / 2
         cy = image.size[1] / 2
                 
@@ -673,7 +674,7 @@ def readCamerasFromTransforms(path, transformsfile, white_background, extension=
             #                   fid=frame_time, masks=masks, mask_path=masks_path)
             return CameraInfo(uid=idx, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
                               image_path=image_path, image_name=image_name, width=width, height=height,
-                              fid=fid, depth=None, sam_mask=sam_mask, mask_feat=mask_feat, cx=cx, cy=cy)
+                              fid=frame_time, depth=None, sam_mask=sam_mask, mask_feat=mask_feat, cx=cx, cy=cy)
         elif dataset_type == 'blender':
             ## Blender
             fovy = focal2fov(fov2focal(fovx, width), height)
@@ -725,6 +726,10 @@ def readCamerasFromTransforms(path, transformsfile, white_background, extension=
                 image = None  
             cx = width / 2
             cy = height / 2
+            # print("cx: ", cx)
+            # print("cy: ", cy)
+            # print("width: ", width)
+            # print("height: ", height)
             # if load_mask_on_the_fly:
             #     masks = None
             # else:
@@ -739,7 +744,7 @@ def readCamerasFromTransforms(path, transformsfile, white_background, extension=
             #                   fid=frame_time, masks=masks, mask_path=masks_path)
             return CameraInfo(uid=idx, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
                               image_path=image_path, image_name=image_name, width=width, height=height,
-                              fid=fid, depth=None, sam_mask=sam_mask, mask_feat=mask_feat, cx=cx, cy=cy)
+                              fid=frame_time, depth=None, sam_mask=sam_mask, mask_feat=mask_feat, cx=cx, cy=cy)
         else:
             raise NotImplementedError()
              
