@@ -16,55 +16,79 @@ from utils.graphics_utils import fov2focal
 import torch
 import json
 WARNED = False
+from tqdm import tqdm
+import os
+import psutil
 
 def loadCam(args, id, cam_info, resolution_scale):
-    orig_w, orig_h = cam_info.image.size
+    if not args.load_image_on_the_fly:
+        orig_w, orig_h = cam_info.image.size
 
-    if args.resolution in [1, 2, 4, 8]:
-        resolution = round(orig_w/(resolution_scale * args.resolution)), round(orig_h/(resolution_scale * args.resolution))
-    else:  # should be a type that converts to float
-        if args.resolution == -1:
-            if orig_w > 1600:
-                global WARNED
-                if not WARNED:
-                    print("[ INFO ] Encountered quite large input images (>1.6K pixels width), rescaling to 1.6K.\n "
-                        "If this is not desired, please explicitly specify '--resolution/-r' as 1")
-                    WARNED = True
-                global_down = orig_w / 1600
+        if args.resolution in [1, 2, 4, 8]:
+            resolution = round(orig_w/(resolution_scale * args.resolution)), round(orig_h/(resolution_scale * args.resolution))
+        else:  # should be a type that converts to float
+            if args.resolution == -1:
+                if orig_w > 1600:
+                    global WARNED
+                    if not WARNED:
+                        print("[ INFO ] Encountered quite large input images (>1.6K pixels width), rescaling to 1.6K.\n "
+                            "If this is not desired, please explicitly specify '--resolution/-r' as 1")
+                        WARNED = True
+                    global_down = orig_w / 1600
+                else:
+                    global_down = 1
             else:
-                global_down = 1
+                global_down = orig_w / args.resolution
+
+            scale = float(global_down) * float(resolution_scale)
+            resolution = (int(orig_w / scale), int(orig_h / scale))
+
+        resized_image_rgb = PILtoTorch(cam_info.image, resolution)  # [C, H, W]
+        
+        # NOTE: load SAM mask. modify -----
+        if cam_info.sam_mask is not None:
+            # step = int(args.resolution/2)     
+            step = int(max(args.resolution, 1))
+            gt_sam_mask = cam_info.sam_mask[:, ::step, ::step]  # downsample for mask
+            gt_sam_mask = torch.from_numpy(gt_sam_mask)
+            # align resolution
+            if resized_image_rgb.shape[1] != gt_sam_mask.shape[1]:
+                resolution = (gt_sam_mask.shape[2], gt_sam_mask.shape[1])   # modify -----
+                resized_image_rgb = PILtoTorch(cam_info.image, resolution)  # [C, H, W]
         else:
-            global_down = orig_w / args.resolution
+            gt_sam_mask = None
+        if cam_info.mask_feat is not None:
+            mask_feat = torch.from_numpy(cam_info.mask_feat)
+        else:
+            mask_feat = None
+        # modify -----
+        gt_image = resized_image_rgb[:3, ...]
+        loaded_mask = None
 
-        scale = float(global_down) * float(resolution_scale)
-        resolution = (int(orig_w / scale), int(orig_h / scale))
-
-    resized_image_rgb = PILtoTorch(cam_info.image, resolution)  # [C, H, W]
-    
-    # NOTE: load SAM mask. modify -----
+        # if resized_image_rgb.shape[1] == 4:
+        if resized_image_rgb.shape[0] == 4:
+            loaded_mask = resized_image_rgb[3:4, ...]
+    else:
+        gt_image = None
+        loaded_mask = None
+        
     if cam_info.sam_mask is not None:
         # step = int(args.resolution/2)     
         step = int(max(args.resolution, 1))
         gt_sam_mask = cam_info.sam_mask[:, ::step, ::step]  # downsample for mask
         gt_sam_mask = torch.from_numpy(gt_sam_mask)
         # align resolution
-        if resized_image_rgb.shape[1] != gt_sam_mask.shape[1]:
-            resolution = (gt_sam_mask.shape[2], gt_sam_mask.shape[1])   # modify -----
-            resized_image_rgb = PILtoTorch(cam_info.image, resolution)  # [C, H, W]
+        # if resized_image_rgb.shape[1] != gt_sam_mask.shape[1]:
+        #     resolution = (gt_sam_mask.shape[2], gt_sam_mask.shape[1])   # modify -----
+        #     resized_image_rgb = PILtoTorch(cam_info.image, resolution)  # [C, H, W]
     else:
         gt_sam_mask = None
     if cam_info.mask_feat is not None:
         mask_feat = torch.from_numpy(cam_info.mask_feat)
     else:
         mask_feat = None
-    # modify -----
 
-    gt_image = resized_image_rgb[:3, ...]
-    loaded_mask = None
-
-    # if resized_image_rgb.shape[1] == 4:
-    if resized_image_rgb.shape[0] == 4:
-        loaded_mask = resized_image_rgb[3:4, ...]
+    
 
     return Camera(colmap_id=cam_info.uid, R=cam_info.R, T=cam_info.T, 
                   FoVx=cam_info.FovX, FoVy=cam_info.FovY, 
@@ -75,10 +99,12 @@ def loadCam(args, id, cam_info, resolution_scale):
 
 def cameraList_from_camInfos(cam_infos, resolution_scale, args):
     camera_list = []
-
-    for id, c in enumerate(cam_infos):
+    pbar = tqdm(enumerate(cam_infos))
+    pbar.set_description(f"Loading CamInfo ({len(cam_infos)} images)...")
+    for id, c in pbar:
         camera_list.append(loadCam(args, id, c, resolution_scale))
-
+        show_dict = {'Mem': f"{(psutil.Process(os.getpid()).memory_info().rss / (1024 * 1024 * 1024)):.1f} GB"}
+        pbar.set_postfix(show_dict)
     return camera_list
 
 def camera_to_JSON(id, camera : Camera):

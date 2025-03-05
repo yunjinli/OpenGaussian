@@ -61,6 +61,7 @@ class ModelParams(ParamGroup):
         ## SADG's implementation
         self.load_mask_on_the_fly = False
         self.load_image_on_the_fly = False
+        self.end_frame = -1
         super().__init__(parser, "Loading Parameters", sentinel)
 
     def extract(self, args):

@@ -51,8 +51,14 @@ class Scene:
                                                            load_mask_on_the_fly=args.load_mask_on_the_fly)
         
         elif os.path.exists(os.path.join(args.source_path, "transforms_train.json")):
-            print("Found transforms_train.json file, assuming Blender data set!")
-            scene_info = sceneLoadTypeCallbacks["Blender"](args.source_path, args.white_background, args.eval)
+            print("Found transforms_train.json file, assuming Multi-View data set!")
+            scene_info = sceneLoadTypeCallbacks["Blender"](path=args.source_path, 
+                                                           white_background=args.white_background, 
+                                                           eval=args.eval, 
+                                                           load_image_on_the_fly=args.load_image_on_the_fly, 
+                                                           load_mask_on_the_fly=args.load_mask_on_the_fly, 
+                                                           end_frame=args.end_frame
+                                                           )
         else:
             assert False, "Could not recognize scene type!"
 
