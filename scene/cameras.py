@@ -41,7 +41,9 @@ class Camera(nn.Module):
             print(f"[Warning] Custom device {data_device} failed, fallback to default cuda device" )
             self.data_device = torch.device("cuda")
 
-        self.data_on_gpu = True     # note
+        # self.data_on_gpu = True     # note
+        self.data_on_gpu = data_device == 'cuda'     # note
+        
         self.original_image = image.clamp(0.0, 1.0).to(self.data_device)
         # modify -----
         self.original_mask = gt_alpha_mask.to(self.data_device) if gt_alpha_mask is not None else None
@@ -77,8 +79,10 @@ class Camera(nn.Module):
     
     # modify -----
     def to_gpu(self):
+        # print("TEST")
         for attr_name in dir(self):
             attr = getattr(self, attr_name)
+            # print(attr)
             if isinstance(attr, torch.Tensor) and not attr.is_cuda:
                 setattr(self, attr_name, attr.to('cuda'))
         self.data_on_gpu = True

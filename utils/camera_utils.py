@@ -50,8 +50,8 @@ def loadCam(args, id, cam_info, resolution_scale):
             step = int(max(args.resolution, 1))
             gt_sam_mask = cam_info.sam_mask[:, ::step, ::step]  # downsample for mask
             gt_sam_mask = torch.from_numpy(gt_sam_mask)
-            print(resized_image_rgb.shape[1:])
-            print(gt_sam_mask.shape[1:])
+            # print(resized_image_rgb.shape[1:])
+            # print(gt_sam_mask.shape[1:])
             # align resolution
             if resized_image_rgb.shape[1] != gt_sam_mask.shape[1]:
                 resolution = (gt_sam_mask.shape[2], gt_sam_mask.shape[1])   # modify -----
@@ -97,7 +97,7 @@ def loadCam(args, id, cam_info, resolution_scale):
                   cx=cam_info.cx, cy=cam_info.cy,
                   image=gt_image, depth=None, gt_alpha_mask=loaded_mask,
                   gt_sam_mask=gt_sam_mask, gt_mask_feat=mask_feat,
-                  image_name=cam_info.image_name, uid=id, data_device=args.data_device, fid=cam_info.fid)
+                  image_name=cam_info.image_name, uid=id, data_device=args.data_device if not args.load2gpu_on_the_fly else 'cpu', fid=cam_info.fid)
 
 def cameraList_from_camInfos(cam_infos, resolution_scale, args):
     camera_list = []
