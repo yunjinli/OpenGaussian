@@ -4,7 +4,7 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G
 #SBATCH --gres=gpu:1,VRAM:12G
-#SBATCH --time=01:00:00
+#SBATCH --time=2:00:00
 #SBATCH --partition=DEADLINEBIG
 #SBATCH --comment="iccv"
 #SBATCH --output=/usr/stud/lyun/OpenGaussian/log/slurm-%j.out
@@ -29,8 +29,8 @@
 # python metrics_segmentation.py --model_path /usr/stud/lyun/storage/user/4dgsam_output/OpenGaussian/technicolor/${dataset_name} --no_psnr --benchmark_path /usr/stud/lyun/storage/user/4dgsam_output/OpenGaussian/technicolor/${dataset_name}/test/ours_30000/
 
 
-# dataset_name="Theater"
+dataset_name="Theater"
 # python render_new.py --source_path /usr/stud/lyun/storage/user/4dgsam/data/technicolor/Undistorted/${dataset_name} --model_path /usr/stud/lyun/storage/user/4dgsam_output/OpenGaussian/technicolor/${dataset_name} --iteration 50000 --eval --skip_train
 # python render_new.py --source_path /usr/stud/lyun/storage/user/4dgsam/data/technicolor/Undistorted/${dataset_name} --model_path /usr/stud/lyun/storage/user/4dgsam_output/OpenGaussian/technicolor/${dataset_name} --iteration 70000 --eval --skip_train
-# python render_by_click_new.py --source_path /usr/stud/lyun/storage/user/4dgsam/data/technicolor/Undistorted/${dataset_name} --model_path /usr/stud/lyun/storage/user/4dgsam_output/OpenGaussian/technicolor/${dataset_name} --eval --iteration 70000 --skip_train --points "(557, 471)" "(463, 532)" "(497, 534)" "(537, 533)" "(544, 487)" "(591, 462)" "(605, 500)" "(579, 502)" "(588, 538)" "(563, 522)" "(543, 511)"
-# python metrics_segmentation.py --model_path /usr/stud/lyun/storage/user/4dgsam_output/OpenGaussian/technicolor/${dataset_name} --no_psnr --benchmark_path /usr/stud/lyun/storage/user/4dgsam_output/OpenGaussian/technicolor/${dataset_name}/test/ours_30000/
+python render_by_click_new.py --source_path /usr/stud/lyun/storage/user/4dgsam/data/technicolor/Undistorted/${dataset_name} --model_path /usr/stud/lyun/storage/user/4dgsam_output/OpenGaussian/technicolor/${dataset_name} --eval --iteration 70000 --skip_train --points "(557, 471)" ## "(463, 532)" "(497, 534)" "(537, 533)" "(544, 487)" "(591, 462)" "(605, 500)" "(579, 502)" "(588, 538)" "(563, 522)" "(543, 511)"
+python metrics_segmentation.py --model_path /usr/stud/lyun/storage/user/4dgsam_output/OpenGaussian/technicolor/${dataset_name} --no_psnr --benchmark_path /usr/stud/lyun/storage/user/4dgsam_output/OpenGaussian/technicolor/${dataset_name}/test/ours_30000/

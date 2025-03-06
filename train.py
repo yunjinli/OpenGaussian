@@ -462,8 +462,13 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             mask_loss = F.mse_loss(alpha, gt_mask)
             loss = loss + mask_loss
         
+        can_update = ~torch.isnan(loss)
+        # print(loss)
         if no_need_bk == False:
-            loss.backward()
+            if can_update:
+                loss.backward()
+            else:
+                print("[Warning] Loss is NaN...")
 
         iter_end.record()
 
@@ -535,7 +540,10 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
         with torch.no_grad():
             # Progress bar
-            ema_loss_for_log = 0.4 * loss.item() + 0.6 * ema_loss_for_log
+            if can_update:
+                ema_loss_for_log = 0.4 * loss.item() + 0.6 * ema_loss_for_log
+            else:
+                ema_loss_for_log = ema_loss_for_log
             # show_dict["CUDA"] = 
             if iteration % 10 == 0:
                 progress_bar.set_postfix({"Loss": f"{ema_loss_for_log:.{7}f}", "CUDA": f'{(torch.cuda.max_memory_allocated(device=None) / (1024 * 1024 * 1024)):.1f} GB'})
@@ -575,7 +583,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
             # Optimizer step
             if iteration < opt.iterations:
-                gaussians.optimizer.step()
+                if can_update:
+                    gaussians.optimizer.step()
                 gaussians.optimizer.zero_grad(set_to_none = True)
                 torch.cuda.empty_cache()
 

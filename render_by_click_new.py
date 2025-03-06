@@ -292,13 +292,19 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
         # print(len(rendered_cluster_imgs))
         torchvision.utils.save_image(rendered_cluster_imgs[0][:3,:,:], os.path.join(segment_objects_path, '{0:05d}'.format(idx) + ".png"))
         # 保存 mask
-        cluster_silhouette = rendered_leaf_cluster_silhouettes[0] > 0.8
+        # cluster_silhouette = rendered_leaf_cluster_silhouettes[0] > 0.8
+        cluster_silhouette = rendered_leaf_cluster_silhouettes[0] > 0.5
+        torchvision.utils.save_image(cluster_silhouette.unsqueeze(0).expand(3, -1, -1).to(torch.float32), os.path.join(pred_masks_path, '{0:05d}'.format(idx) + ".png"))
+        
+        # binary_mask = rendered_cluster_imgs[0][:3,:,:].clone()
+        # binary_mask[binary_mask > 0.0] = 1.0
+        # torchvision.utils.save_image(binary_mask.to(torch.float32), os.path.join(pred_masks_path, '{0:05d}'.format(idx) + ".png"))
+        
         # buffer_image[buffer_image < 0.5] = 0
         # buffer_image[buffer_image != 0] = 1
         # print(cluster_silhouette.shape)
         # print(cluster_silhouette)
         # torchvision.utils.save_image(cluster_silhouette.to(torch.float32), os.path.join(pred_masks_path, '{0:05d}'.format(idx) + ".png"))
-        torchvision.utils.save_image(cluster_silhouette.unsqueeze(0).expand(3, -1, -1).to(torch.float32), os.path.join(pred_masks_path, '{0:05d}'.format(idx) + ".png"))
         # a = 0
         # # 聚类 -----------------------------------------------
 
