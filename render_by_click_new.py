@@ -110,6 +110,7 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
     # leaf_lang_feat[leaf_occu_count < 5] *= 0.0      # 出现次数太少的聚类不考虑
     # leaf_cluster_indices = leaf_ind
     
+    # image_name = "00010"
     image_name = "00000"
     # # object_name = "apple"
     # pix_xy = (450, 217) # bag of cookies
@@ -187,8 +188,8 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
         # print(pre_pts_mask.shape)
 
         # post process  modify-----
-        # post_process = True
         post_process = True
+        # post_process = False
         max_time = 5
         if post_process and max_time > 0:
             nearest_k_distance = pytorch3d.ops.knn_points(
@@ -241,6 +242,10 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
 
         # render
     print("Selected cls: ", all_click_leaf_indices)
+    print("Mask", pre_pts_mask_final)
+    print("Mask", pre_pts_mask_final.shape)
+    torch.save(pre_pts_mask_final, os.path.join(model_path, f"point_cloud/iteration_{iteration}/segmented_mask.pt"))
+    print("XYZ", gaussians._xyz.shape)
     for idx, view in enumerate(tqdm(views, desc="Rendering progress")):
         # render_pkg = render(view, gaussians, pipeline, background, iteration, rescale=False)
         
@@ -256,6 +261,8 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
         # # waldo_kitchen
         # if  view.image_name not in ["frame_00053", "frame_00066", "frame_00089", "frame_00140", "frame_00154"]:
         #     continue
+        if not view.data_on_gpu:
+            view.to_gpu()
         fid = view.fid
         xyz = gaussians.get_xyz
         time_input = fid.unsqueeze(0).expand(xyz.shape[0], -1)
@@ -271,6 +278,7 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
                             render_feat_map=True, 
                             render_cluster=False,
                             better_vis=True,
+                            # better_vis=False,
                             # pre_mask=pre_pts_mask,
                             pre_mask=pre_pts_mask_final,
                             seg_rgb=True,
@@ -290,7 +298,11 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
         
         # for i, img in enumerate(rendered_cluster_imgs):
         # print(len(rendered_cluster_imgs))
-        torchvision.utils.save_image(rendered_cluster_imgs[0][:3,:,:], os.path.join(segment_objects_path, '{0:05d}'.format(idx) + ".png"))
+        # print(rendered_cluster_imgs)
+        try:
+            torchvision.utils.save_image(rendered_cluster_imgs[0][:3,:,:], os.path.join(segment_objects_path, '{0:05d}'.format(idx) + ".png"))
+        except:
+            print("Skip frame: ", idx)
         # 保存 mask
         # cluster_silhouette = rendered_leaf_cluster_silhouettes[0] > 0.8
         cluster_silhouette = rendered_leaf_cluster_silhouettes[0] > 0.5
@@ -307,7 +319,8 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
         # torchvision.utils.save_image(cluster_silhouette.to(torch.float32), os.path.join(pred_masks_path, '{0:05d}'.format(idx) + ".png"))
         # a = 0
         # # 聚类 -----------------------------------------------
-
+        if view.data_on_gpu:
+            view.to_cpu()
 def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParams, skip_train : bool, skip_test : bool):
     with torch.no_grad():
         gaussians = GaussianModel(dataset.sh_degree)

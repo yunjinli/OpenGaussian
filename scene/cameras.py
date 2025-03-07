@@ -18,16 +18,20 @@ class Camera(nn.Module):
     def __init__(self, colmap_id, R, T, FoVx, FoVy, cx, cy, image, depth, gt_alpha_mask,
                  gt_sam_mask, gt_mask_feat,
                  image_name, uid,
-                 trans=np.array([0.0, 0.0, 0.0]), scale=1.0, data_device = "cuda", fid=None,
+                 trans=np.array([0.0, 0.0, 0.0]), scale=1.0, data_device = "cuda", fid=None, mask_seg_path=None, mask_feat_path=None, image_path=None, width=None, height=None
                  ):
         super(Camera, self).__init__()
-
+        self.mask_seg_path = mask_seg_path
+        self.mask_feat_path = mask_feat_path
+        self.image_path = image_path
         self.uid = uid
         self.colmap_id = colmap_id
         self.R = R
         self.T = T
         self.FoVx = FoVx
         self.FoVy = FoVy
+        self.pesudo_ins_feat_path = None
+        self.pesudo_mask_bool_path = None
         # modify -----
         self.cx = cx
         self.cy = cy
@@ -44,7 +48,18 @@ class Camera(nn.Module):
         # self.data_on_gpu = True     # note
         self.data_on_gpu = data_device == 'cuda'     # note
         
-        self.original_image = image.clamp(0.0, 1.0).to(self.data_device)
+        if image is not None:
+            self.original_image = image.clamp(0.0, 1.0).to(self.data_device)
+            self.image_width = self.original_image.shape[2]
+            self.image_height = self.original_image.shape[1]
+            if gt_alpha_mask is not None:
+                self.original_image *= gt_alpha_mask.to(self.data_device)
+            else:
+                self.original_image *= torch.ones((1, self.image_height, self.image_width), device=self.data_device)
+        else:
+            self.original_image = None
+            self.image_width = width
+            self.image_height = height
         # modify -----
         self.original_mask = gt_alpha_mask.to(self.data_device) if gt_alpha_mask is not None else None
         
@@ -56,13 +71,9 @@ class Camera(nn.Module):
         self.cluster_masks = None
         self.bClusterOccur = None
 
-        self.image_width = self.original_image.shape[2]
-        self.image_height = self.original_image.shape[1]
+        
 
-        if gt_alpha_mask is not None:
-            self.original_image *= gt_alpha_mask.to(self.data_device)
-        else:
-            self.original_image *= torch.ones((1, self.image_height, self.image_width), device=self.data_device)
+        
 
         self.fid = torch.Tensor(np.array([fid])).to(self.data_device)
         

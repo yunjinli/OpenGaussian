@@ -36,6 +36,7 @@ from utils.system_utils import mkdir_p
 from utils.opengs_utlis import mask_feature_mean, pair_mask_feature_mean, \
     get_SAM_mask_and_feat, load_code_book, \
     calculate_iou, calculate_distances, calculate_pairwise_distances
+import psutil
 
 try:
     from torch.utils.tensorboard import SummaryWriter
@@ -262,9 +263,16 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         if not viewpoint_stack:
             viewpoint_stack = scene.getTrainCameras().copy()
         viewpoint_cam = viewpoint_stack.pop(randint(0, len(viewpoint_stack)-1))
-        if not viewpoint_cam.data_on_gpu:
-            viewpoint_cam.to_gpu()
-
+        if dataset.load2gpu_on_the_fly:
+            if not viewpoint_cam.data_on_gpu:
+                viewpoint_cam.to_gpu()
+                
+        if dataset.load_mask_on_the_fly:
+            sam_mask = np.load(viewpoint_cam.mask_seg_path)
+            gt_sam_mask = torch.from_numpy(sam_mask).cuda()
+            mask_feat = np.load(viewpoint_cam.mask_feat_path)
+            gt_mask_feat = torch.from_numpy(mask_feat).cuda()
+            
         cb_mode = None  # Current status: No launch codebook discretization
         if iteration == 1:
             print("[Stage 0] Start 3dgs pre-train ...")
@@ -295,21 +303,40 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         #   - Preprocessing: construct pseudo labels (instance features of stage 1) #
         #     Will execute twice, before coarse-level and fine-level clustering     #
         # ###########################################################################
-        if (cb_mode is not None and viewpoint_cam.pesudo_ins_feat is None) or \
-           ((iteration == opt.start_root_cb_iter + 1) or (iteration == opt.start_leaf_cb_iter + 1)):
-            with torch.no_grad():
-                if cb_mode == "leaf" and cluster_indices is None:
-                    cluster_indices = ins_feat_codebook.cls_ids # [num_pts], Coarse-level ID of each point (0 ~ k1-1)
-                construct_pseudo_ins_feat(scene, render, (pipe, background, iteration),
-                                          cluster_indices=cluster_indices, mode=cb_mode,
-                                          root_num=opt.root_node_num, leaf_num=opt.leaf_node_num,
-                                          sam_level=opt.sam_level,
-                                          save_memory=opt.save_memory, deform=deform)
-                if not viewpoint_cam.data_on_gpu:
-                    viewpoint_cam.to_gpu()
-                if cb_mode == "leaf":
-                    # Number of leaves per root
-                    ins_feat_codebook.iLeafSubNum = gaussians.iClusterSubNum
+        if dataset.load_mask_on_the_fly:
+            if (cb_mode is not None and viewpoint_cam.pesudo_ins_feat_path is None) or \
+            ((iteration == opt.start_root_cb_iter + 1) or (iteration == opt.start_leaf_cb_iter + 1)):
+                with torch.no_grad():
+                    if cb_mode == "leaf" and cluster_indices is None:
+                        cluster_indices = ins_feat_codebook.cls_ids # [num_pts], Coarse-level ID of each point (0 ~ k1-1)
+                    construct_pseudo_ins_feat(scene, render, (pipe, background, iteration),
+                                            cluster_indices=cluster_indices, mode=cb_mode,
+                                            root_num=opt.root_node_num, leaf_num=opt.leaf_node_num,
+                                            sam_level=opt.sam_level,
+                                            save_memory=opt.save_memory, deform=deform, load_mask_on_the_fly=dataset.load_mask_on_the_fly)
+                    if dataset.load2gpu_on_the_fly:
+                        if not viewpoint_cam.data_on_gpu:
+                            viewpoint_cam.to_gpu()
+                    if cb_mode == "leaf":
+                        # Number of leaves per root
+                        ins_feat_codebook.iLeafSubNum = gaussians.iClusterSubNum
+        else:
+            if (cb_mode is not None and viewpoint_cam.pesudo_ins_feat is None) or \
+            ((iteration == opt.start_root_cb_iter + 1) or (iteration == opt.start_leaf_cb_iter + 1)):
+                with torch.no_grad():
+                    if cb_mode == "leaf" and cluster_indices is None:
+                        cluster_indices = ins_feat_codebook.cls_ids # [num_pts], Coarse-level ID of each point (0 ~ k1-1)
+                    construct_pseudo_ins_feat(scene, render, (pipe, background, iteration),
+                                            cluster_indices=cluster_indices, mode=cb_mode,
+                                            root_num=opt.root_node_num, leaf_num=opt.leaf_node_num,
+                                            sam_level=opt.sam_level,
+                                            save_memory=opt.save_memory, deform=deform, load_mask_on_the_fly=dataset.load_mask_on_the_fly)
+                    if dataset.load2gpu_on_the_fly:
+                        if not viewpoint_cam.data_on_gpu:
+                            viewpoint_cam.to_gpu()
+                    if cb_mode == "leaf":
+                        # Number of leaves per root
+                        ins_feat_codebook.iLeafSubNum = gaussians.iClusterSubNum
 
         # Render
         if (iteration - 1) == debug_from:
@@ -354,7 +381,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         fid = viewpoint_cam.fid
         N = gaussians.get_xyz.shape[0]
         time_input = fid.unsqueeze(0).expand(N, -1)
-        d_xyz, d_rotation, d_scaling = deform.step(gaussians.get_xyz.detach(), time_input)
+        with torch.no_grad():
+            d_xyz, d_rotation, d_scaling = deform.step(gaussians.get_xyz.detach(), time_input)
 
         render_pkg = render(viewpoint_cam, gaussians, pipe, bg, iteration,
                             rescale=rescale,                # wherther to re-scale the gaussian scale
@@ -431,12 +459,19 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         # 2.1 coarse-level
         if cb_mode == "root":   
             # Only consider valid pixels
-            keeped_pix = viewpoint_cam.pesudo_ins_feat.sum(dim=(0)) > 0     # Invalid pixels of pseudo-labels
+            if dataset.load_mask_on_the_fly:
+                pesudo_ins_feat = torch.load(viewpoint_cam.pesudo_ins_feat_path).cuda()
+                keeped_pix = pesudo_ins_feat.sum(dim=(0)) > 0     # Invalid pixels of pseudo-labels
+            else:
+                keeped_pix = viewpoint_cam.pesudo_ins_feat.sum(dim=(0)) > 0     # Invalid pixels of pseudo-labels
             keeped_pix = keeped_pix.bool()&rendered_silhouette.bool()       # Empty regions after rescaling
             keeped_pix = keeped_pix&(~invalid_pix.unsqueeze(0))             # Invalid area of the original mask
             keeped_pix = rendered_silhouette.bool()
             # loss  Eq.(4) in the paper.
-            feat_loss = l1_loss(rendered_ins_feat, viewpoint_cam.pesudo_ins_feat, keeped_pix)  
+            if dataset.load_mask_on_the_fly:
+                feat_loss = l1_loss(rendered_ins_feat, pesudo_ins_feat, keeped_pix)  
+            else:
+                feat_loss = l1_loss(rendered_ins_feat, viewpoint_cam.pesudo_ins_feat, keeped_pix)  
             # feat_loss = l2_loss(rendered_ins_feat, viewpoint_cam.pesudo_ins_feat, keeped_pix)
             loss = feat_loss
         # 2.2 fine-level
@@ -448,7 +483,11 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 rendered_ins_feat = cluster_pred                    # 
                 # cluster_mask = viewpoint_cam.cluster_masks[i]     # [H, W] bool
                 # cluster_silhouette = cluster_silhouette & cluster_mask
-                feat_loss = l2_loss(cluster_pred, viewpoint_cam.pesudo_ins_feat, cluster_silhouette)
+                if dataset.load_mask_on_the_fly:
+                    pesudo_ins_feat = torch.load(viewpoint_cam.pesudo_ins_feat_path).cuda()
+                    feat_loss = l2_loss(cluster_pred, pesudo_ins_feat, cluster_silhouette)
+                else:
+                    feat_loss = l2_loss(cluster_pred, viewpoint_cam.pesudo_ins_feat, cluster_silhouette)
                 if i == 0:
                     # loss = feat_loss * (cluster_silhouette.sum() / total_pix)
                     loss = feat_loss
@@ -513,7 +552,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                     makedirs(pseudo_ins_feat_path, exist_ok=True)
                     torchvision.utils.save_image(feat.detach().cpu()[:3, :, :], os.path.join(pseudo_ins_feat_path, '{0:05d}'.format(iteration) + "_1.png"))
                     torchvision.utils.save_image(feat.detach().cpu()[3:6, :, :], os.path.join(pseudo_ins_feat_path, '{0:05d}'.format(iteration) + "_2.png"))
-
+                
                 if cb_mode is not None:
                     # silhouette (alpha to mask) [OpenGaussian] stage 2
                     silhouette_path = os.path.join(scene.model_path, "train_process", sub_floader, "silhouette")
@@ -546,7 +585,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 ema_loss_for_log = ema_loss_for_log
             # show_dict["CUDA"] = 
             if iteration % 10 == 0:
-                progress_bar.set_postfix({"Loss": f"{ema_loss_for_log:.{7}f}", "CUDA": f'{(torch.cuda.max_memory_allocated(device=None) / (1024 * 1024 * 1024)):.1f} GB'})
+                progress_bar.set_postfix({"Loss": f"{ema_loss_for_log:.{7}f}", "CUDA": f'{(torch.cuda.max_memory_allocated(device=None) / (1024 * 1024 * 1024)):.1f} GB', 'Mem': f"{(psutil.Process(os.getpid()).memory_info().rss / (1024 * 1024 * 1024)):.1f} GB"})
                 progress_bar.update(10)
             if iteration == opt.iterations:
                 progress_bar.close()
@@ -606,11 +645,13 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                                           cluster_indices=leaf_cluster_indices, mode="lang",
                                           root_num=opt.root_node_num, leaf_num=opt.leaf_node_num,
                                           sam_level=opt.sam_level,
-                                          save_memory=opt.save_memory, deform=deform)
+                                          save_memory=opt.save_memory, deform=deform, load_mask_on_the_fly=dataset.load_mask_on_the_fly)
         
         # note: save memory (only stage 2, 3)
-        if viewpoint_cam.data_on_gpu and opt.save_memory and cb_mode is not None:
-            viewpoint_cam.to_cpu()
+        if dataset.load2gpu_on_the_fly:
+            # if viewpoint_cam.data_on_gpu and opt.save_memory and cb_mode is not None:
+            if viewpoint_cam.data_on_gpu and opt.save_memory:
+                viewpoint_cam.to_cpu()
 
 def prepare_output_and_logger(args):    
     if not args.model_path:
@@ -640,7 +681,7 @@ def construct_pseudo_ins_feat(scene : Scene, renderFunc, renderArgs,
                             mode="root",            # root, leaf, lang
                             root_num=64, leaf_num=10,   # k1, k2
                             sam_level=3,
-                            save_memory=False, deform=None):
+                            save_memory=False, deform=None, load_mask_on_the_fly=False):
     torch.cuda.empty_cache()
     # ##############################################################################################
     # [Stage 2.1, 2.2] Render all training views once to construct pseudo-instance feature labels. #
@@ -654,14 +695,20 @@ def construct_pseudo_ins_feat(scene : Scene, renderFunc, renderArgs,
         fid = view.fid
         N = scene.gaussians.get_xyz.shape[0]
         time_input = fid.unsqueeze(0).expand(N, -1)
-        d_xyz, d_rotation, d_scaling = deform.step(scene.gaussians.get_xyz.detach(), time_input)
+        with torch.no_grad():
+            d_xyz, d_rotation, d_scaling = deform.step(scene.gaussians.get_xyz.detach(), time_input)
         # render
         render_pkg = renderFunc(view, scene.gaussians, *renderArgs, rescale=False, origin_feat=True, d_xyz=d_xyz, d_rotation=d_rotation, d_scaling=d_scaling)
         rendered_ins_feat = render_pkg["ins_feat"]
-        
-        # get gt sam mask
-        mask_id, mask_bool, invalid_pix = \
-            get_SAM_mask_and_feat(view.original_sam_mask.cuda(), level=sam_level)
+        if load_mask_on_the_fly:
+            sam_mask = np.load(view.mask_seg_path)
+            gt_sam_mask = torch.from_numpy(sam_mask).cuda()
+            mask_id, mask_bool, invalid_pix = \
+                get_SAM_mask_and_feat(gt_sam_mask.cuda(), level=sam_level)
+        else:
+            # get gt sam mask
+            mask_id, mask_bool, invalid_pix = \
+                get_SAM_mask_and_feat(view.original_sam_mask.cuda(), level=sam_level)
 
         # construt pseudo ins_feat, mask levle
         pseudo_mask_ins_feat_, mask_var, pix_count = mask_feature_mean(rendered_ins_feat, mask_bool, return_var=True)   # [num_mask, 6]
@@ -690,9 +737,19 @@ def construct_pseudo_ins_feat(scene : Scene, renderFunc, renderArgs,
         # NOTE: save the construct pesudo_ins_feat
         # total_feat.append(pseudo_mask_ins_feat[1:,:])
         # if view.pesudo_ins_feat is None:
-        view.pesudo_ins_feat = filter_pseudo_ins_feat if filter else pseudo_ins_feat
-        # view.pesudo_ins_feat = rendered_ins_feat
-        view.pesudo_mask_bool = mask_bool_filtered.to(torch.bool)
+        if load_mask_on_the_fly:
+            cache_path = os.path.dirname(view.mask_seg_path.replace('language_features_new', 'pesudo_ins_feat'))
+            os.makedirs(cache_path, exist_ok=True)
+            
+            view.pesudo_ins_feat_path = view.mask_feat_path.replace('language_features_new', 'pesudo_ins_feat').replace('.npy', '.pt')
+            view.pesudo_mask_bool_path = view.mask_seg_path.replace('language_features_new', 'pesudo_ins_feat').replace('.npy', '.pt')
+            
+            torch.save(filter_pseudo_ins_feat if filter else pseudo_ins_feat, view.pesudo_ins_feat_path)
+            torch.save(mask_bool_filtered.to(torch.bool), view.pesudo_mask_bool_path)
+        else:
+            view.pesudo_ins_feat = filter_pseudo_ins_feat if filter else pseudo_ins_feat
+            # view.pesudo_ins_feat = rendered_ins_feat
+            view.pesudo_mask_bool = mask_bool_filtered.to(torch.bool)
 
         # Save some results for visualization.
         pseudo_debug = True
@@ -736,7 +793,8 @@ def construct_pseudo_ins_feat(scene : Scene, renderFunc, renderArgs,
             fid = view.fid
             N = scene.gaussians.get_xyz.shape[0]
             time_input = fid.unsqueeze(0).expand(N, -1)
-            d_xyz, d_rotation, d_scaling = deform.step(scene.gaussians.get_xyz.detach(), time_input)
+            with torch.no_grad():
+                d_xyz, d_rotation, d_scaling = deform.step(scene.gaussians.get_xyz.detach(), time_input)
             render_pkg = renderFunc(view, scene.gaussians, *renderArgs, cluster_idx=cluster_indices, rescale=False,\
                                     render_feat_map=False, render_cluster=True, origin_feat=True, better_vis=True,
                                     root_num=root_num, leaf_num=leaf_num, d_xyz=d_xyz, d_rotation=d_rotation, d_scaling=d_scaling)
@@ -755,35 +813,68 @@ def construct_pseudo_ins_feat(scene : Scene, renderFunc, renderArgs,
                 rendered_silhouette = (rendered_cluster_silhouettes[i] > 0.9).unsqueeze(0)  # cluster mask
 
                 # (1) compute the IoU of this cluster with pseudo masks.
-                ious = calculate_iou(view.pesudo_mask_bool, rendered_silhouette, base="former")
-                # pseudo masks with IoU above threshold
-                inters_mask = view.pesudo_mask_bool[ious[0] > 0.2]  # [num_mask, H, W]
-                inters_mask_ = inters_mask.sum(0).to(torch.bool)   # [H, W] bool
-                # pseudo mask features, noly for visalization [6, H, W]
-                inters_pesudo_ins_feat = view.pesudo_ins_feat * inters_mask_.unsqueeze(0) 
+                if load_mask_on_the_fly:
+                    pesudo_ins_feat = torch.load(view.pesudo_ins_feat_path).cuda()
+                    pesudo_mask_bool = torch.load(view.pesudo_mask_bool_path).cuda()
+                    ious = calculate_iou(pesudo_mask_bool, rendered_silhouette, base="former")
+                    # pseudo masks with IoU above threshold
+                    inters_mask = pesudo_mask_bool[ious[0] > 0.2]  # [num_mask, H, W]
+                    inters_mask_ = inters_mask.sum(0).to(torch.bool)   # [H, W] bool
+                    # pseudo mask features, noly for visalization [6, H, W]
+                    inters_pesudo_ins_feat = pesudo_ins_feat * inters_mask_.unsqueeze(0) 
 
-                # (2) compute the distance between coarse cluster features and pseudo features
-                # mean feature of the pesudo mask, [num_mask, 6]
-                inters_mask_feat_mean = mask_feature_mean(view.pesudo_ins_feat, inters_mask) 
-                # mean feature of the cluster, [num_mask, 6]
-                cluster_mask_feat_mean = mask_feature_mean(rendered_ins_feat, inters_mask, image_mask=rendered_silhouette) 
-                # distance
-                l1_dis, l2_dis = calculate_distances(inters_mask_feat_mean, cluster_mask_feat_mean)   # metric="l1"
+                    # (2) compute the distance between coarse cluster features and pseudo features
+                    # mean feature of the pesudo mask, [num_mask, 6]
+                    inters_mask_feat_mean = mask_feature_mean(pesudo_ins_feat, inters_mask) 
+                    # mean feature of the cluster, [num_mask, 6]
+                    cluster_mask_feat_mean = mask_feature_mean(rendered_ins_feat, inters_mask, image_mask=rendered_silhouette) 
+                    # distance
+                    l1_dis, l2_dis = calculate_distances(inters_mask_feat_mean, cluster_mask_feat_mean)   # metric="l1"
 
-                # (3) filter out some pseudo masks
-                inters_mask_filter = inters_mask[(l1_dis < 0.9) & (l2_dis < 0.5)]  # l2_disk < 0.8
-                if inters_mask_filter.shape[0] > 10:    # TODO 10? --> leaf_num
-                    smallest_10 = torch.topk(l1_dis, 10, largest=False)[1]
-                    inters_mask_filter = inters_mask[smallest_10]
-                inters_mask_filter_ = inters_mask_filter.sum(0).to(torch.bool) 
-                inters_pesudo_ins_feat2 = view.pesudo_ins_feat * inters_mask_filter_.unsqueeze(0) # noly for visalization
-                if inters_mask_filter_.any() == False:  # Skip if the cluster doesn’t intersect with any pseudo masks.
-                    cluster_occur[cluster_idx] = False
-                    continue
-                
-                pser_cluster_pesudo_mask.append(inters_mask_filter_)    # valid mask
-                # NOTE: (4) Determine the number of masks (i.e., objects) in each coarse cluster.
-                iClusterSubNum[cluster_idx] = max(iClusterSubNum[cluster_idx], inters_mask_filter.shape[0])
+                    # (3) filter out some pseudo masks
+                    inters_mask_filter = inters_mask[(l1_dis < 0.9) & (l2_dis < 0.5)]  # l2_disk < 0.8
+                    if inters_mask_filter.shape[0] > 10:    # TODO 10? --> leaf_num
+                        smallest_10 = torch.topk(l1_dis, 10, largest=False)[1]
+                        inters_mask_filter = inters_mask[smallest_10]
+                    inters_mask_filter_ = inters_mask_filter.sum(0).to(torch.bool) 
+                    inters_pesudo_ins_feat2 = pesudo_ins_feat * inters_mask_filter_.unsqueeze(0) # noly for visalization
+                    if inters_mask_filter_.any() == False:  # Skip if the cluster doesn’t intersect with any pseudo masks.
+                        cluster_occur[cluster_idx] = False
+                        continue
+                    
+                    pser_cluster_pesudo_mask.append(inters_mask_filter_)    # valid mask
+                    # NOTE: (4) Determine the number of masks (i.e., objects) in each coarse cluster.
+                    iClusterSubNum[cluster_idx] = max(iClusterSubNum[cluster_idx], inters_mask_filter.shape[0])
+                else:
+                    ious = calculate_iou(view.pesudo_mask_bool, rendered_silhouette, base="former")
+                    # pseudo masks with IoU above threshold
+                    inters_mask = view.pesudo_mask_bool[ious[0] > 0.2]  # [num_mask, H, W]
+                    inters_mask_ = inters_mask.sum(0).to(torch.bool)   # [H, W] bool
+                    # pseudo mask features, noly for visalization [6, H, W]
+                    inters_pesudo_ins_feat = view.pesudo_ins_feat * inters_mask_.unsqueeze(0) 
+
+                    # (2) compute the distance between coarse cluster features and pseudo features
+                    # mean feature of the pesudo mask, [num_mask, 6]
+                    inters_mask_feat_mean = mask_feature_mean(view.pesudo_ins_feat, inters_mask) 
+                    # mean feature of the cluster, [num_mask, 6]
+                    cluster_mask_feat_mean = mask_feature_mean(rendered_ins_feat, inters_mask, image_mask=rendered_silhouette) 
+                    # distance
+                    l1_dis, l2_dis = calculate_distances(inters_mask_feat_mean, cluster_mask_feat_mean)   # metric="l1"
+
+                    # (3) filter out some pseudo masks
+                    inters_mask_filter = inters_mask[(l1_dis < 0.9) & (l2_dis < 0.5)]  # l2_disk < 0.8
+                    if inters_mask_filter.shape[0] > 10:    # TODO 10? --> leaf_num
+                        smallest_10 = torch.topk(l1_dis, 10, largest=False)[1]
+                        inters_mask_filter = inters_mask[smallest_10]
+                    inters_mask_filter_ = inters_mask_filter.sum(0).to(torch.bool) 
+                    inters_pesudo_ins_feat2 = view.pesudo_ins_feat * inters_mask_filter_.unsqueeze(0) # noly for visalization
+                    if inters_mask_filter_.any() == False:  # Skip if the cluster doesn’t intersect with any pseudo masks.
+                        cluster_occur[cluster_idx] = False
+                        continue
+                    
+                    pser_cluster_pesudo_mask.append(inters_mask_filter_)    # valid mask
+                    # NOTE: (4) Determine the number of masks (i.e., objects) in each coarse cluster.
+                    iClusterSubNum[cluster_idx] = max(iClusterSubNum[cluster_idx], inters_mask_filter.shape[0])
 
                 # (5) save some intermediate results for debugging
                 coarse_debug = False
@@ -833,7 +924,8 @@ def construct_pseudo_ins_feat(scene : Scene, renderFunc, renderArgs,
                 fid = view.fid
                 N = scene.gaussians.get_xyz.shape[0]
                 time_input = fid.unsqueeze(0).expand(N, -1)
-                d_xyz, d_rotation, d_scaling = deform.step(scene.gaussians.get_xyz.detach(), time_input)
+                with torch.no_grad():
+                    d_xyz, d_rotation, d_scaling = deform.step(scene.gaussians.get_xyz.detach(), time_input)
                 # (0) render
                 render_pkg = renderFunc(view, scene.gaussians, *renderArgs, leaf_cluster_idx=cluster_indices, rescale=False,\
                                         render_feat_map=False, render_cluster=True, origin_feat=True, better_vis=False,\
@@ -914,11 +1006,27 @@ def construct_pseudo_ins_feat(scene : Scene, renderFunc, renderArgs,
                 view.to_gpu()
             if sam_level == 0:
                 strat_id = 0
-                end_id = view.original_sam_mask[sam_level].max().to(torch.int64) + 1
+                if load_mask_on_the_fly:
+                    sam_mask = np.load(view.mask_seg_path)
+                    gt_sam_mask = torch.from_numpy(sam_mask).cuda()
+                    end_id = gt_sam_mask[sam_level].max().to(torch.int64) + 1
+                else:
+                    end_id = view.original_sam_mask[sam_level].max().to(torch.int64) + 1
             else:
-                strat_id = view.original_sam_mask[sam_level-1].max().to(torch.int64) + 1
-                end_id = view.original_sam_mask[sam_level].max().to(torch.int64) + 1
-            curr_view_lang_feat = view.original_mask_feat[strat_id:end_id, :]   # [num_mask, 512]
+                if load_mask_on_the_fly:
+                    sam_mask = np.load(view.mask_seg_path)
+                    gt_sam_mask = torch.from_numpy(sam_mask).cuda()
+                    strat_id = gt_sam_mask[sam_level-1].max().to(torch.int64) + 1
+                    end_id = gt_sam_mask[sam_level].max().to(torch.int64) + 1
+                else:
+                    strat_id = view.original_sam_mask[sam_level-1].max().to(torch.int64) + 1
+                    end_id = view.original_sam_mask[sam_level].max().to(torch.int64) + 1
+            if load_mask_on_the_fly:
+                mask_feat = np.load(view.mask_feat_path)
+                gt_mask_feat = torch.from_numpy(mask_feat).cuda()
+                curr_view_lang_feat = gt_mask_feat[strat_id:end_id, :]   # [num_mask, 512]
+            else:
+                curr_view_lang_feat = view.original_mask_feat[strat_id:end_id, :]   # [num_mask, 512]
             curr_view_lang_feat = torch.cat((torch.zeros_like(curr_view_lang_feat[0]).unsqueeze(0), \
                 curr_view_lang_feat))   # note: [num_mask+1, 512] add a feature with all 0s, i.e., the feature with id=0.
             # current feat [k1*k2, 512]
@@ -959,7 +1067,8 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_i
                     fid = viewpoint.fid
                     N = scene.gaussians.get_xyz.shape[0]
                     time_input = fid.unsqueeze(0).expand(N, -1)
-                    d_xyz, d_rotation, d_scaling = deform.step(scene.gaussians.get_xyz.detach(), time_input)
+                    with torch.no_grad():
+                        d_xyz, d_rotation, d_scaling = deform.step(scene.gaussians.get_xyz.detach(), time_input)
                     image = torch.clamp(renderFunc(viewpoint, scene.gaussians, *renderArgs, d_xyz=d_xyz, d_rotation=d_rotation, d_scaling=d_scaling)["render"], 0.0, 1.0)
                     gt_image = torch.clamp(viewpoint.original_image.to("cuda"), 0.0, 1.0)
                     if tb_writer and (idx < 5):

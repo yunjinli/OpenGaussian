@@ -93,11 +93,12 @@ def loadCam(args, id, cam_info, resolution_scale):
     # print(args.resolution)
     return Camera(colmap_id=cam_info.uid, R=cam_info.R, T=cam_info.T, 
                   FoVx=cam_info.FovX, FoVy=cam_info.FovY, 
-                #   cx=cam_info.cx/args.resolution, cy=cam_info.cy/args.resolution,
-                  cx=cam_info.cx, cy=cam_info.cy,
+                  cx=cam_info.cx/args.resolution, cy=cam_info.cy/args.resolution,
+                #   cx=cam_info.cx, cy=cam_info.cy,
                   image=gt_image, depth=None, gt_alpha_mask=loaded_mask,
                   gt_sam_mask=gt_sam_mask, gt_mask_feat=mask_feat,
-                  image_name=cam_info.image_name, uid=id, data_device=args.data_device if not args.load2gpu_on_the_fly else 'cpu', fid=cam_info.fid)
+                  image_name=cam_info.image_name, uid=id, data_device=args.data_device if not args.load2gpu_on_the_fly else 'cpu', fid=cam_info.fid,
+                  mask_seg_path=cam_info.mask_seg_path, mask_feat_path=cam_info.mask_feat_path, image_path=cam_info.image_path, width=cam_info.width, height=cam_info.height)
 
 def cameraList_from_camInfos(cam_infos, resolution_scale, args):
     camera_list = []

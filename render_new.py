@@ -123,8 +123,11 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
     # leaf_num = (leaf_cluster_indices.max() + 1) / root_num
     # render
     for idx, view in enumerate(tqdm(views, desc="Rendering progress")):
+        if not view.data_on_gpu:
+            view.to_gpu()
         fid = view.fid
         # print(fid)
+        
         xyz = gaussians.get_xyz
         time_input = fid.unsqueeze(0).expand(xyz.shape[0], -1)
         d_xyz, d_rotation, d_scaling = deform.step(xyz.detach(), time_input)
@@ -148,7 +151,12 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
         #                     d_xyz=d_xyz, d_rotation=d_rotation, d_scaling=d_scaling)
         # RGB
         rendering = render_pkg["render"]
-        gt = view.original_image[0:3, :, :]
+        
+        try:
+            gt = view.original_image[0:3, :, :]
+            torchvision.utils.save_image(gt, os.path.join(gts_path, '{0:05d}'.format(idx) + ".png"))
+        except:
+            print("no GT...")
         # print(render_pkg['leaf_clusters_imgs'][50].shape)
         # for i in range(int(root_num * leaf_num)):
         # print(root_num * leaf_num)
@@ -166,7 +174,6 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
         # torchvision.utils.save_image(gt, os.path.join(gts_path, view.image_name + ".png"))
 
         torchvision.utils.save_image(rendering, os.path.join(render_path, '{0:05d}'.format(idx) + ".png"))
-        torchvision.utils.save_image(gt, os.path.join(gts_path, '{0:05d}'.format(idx) + ".png"))
         
         # ins_feat
         torchvision.utils.save_image(rendered_ins_feat[:3,:,:], os.path.join(render_ins_feat_path1, '{0:05d}'.format(idx) + ".png"))
@@ -194,7 +201,8 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
         #     # import matplotlib.pyplot as plt
         #     # plt.imshow(to8b(buffer_image).transpose(1,2,0))
         #     # plt.show()
-            
+        if view.data_on_gpu:
+            view.to_cpu()
             
         #     torchvision.utils.save_image(buffer_image.cpu(), os.path.join(segment_objects_path, '{0:05d}'.format(idx) + ".png"))
         

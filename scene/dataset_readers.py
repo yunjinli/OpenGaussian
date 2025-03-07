@@ -45,6 +45,8 @@ class CameraInfo(NamedTuple):
     width: int
     height: int
     fid: float
+    mask_seg_path: str
+    mask_feat_path: str
 
 class SceneInfo(NamedTuple):
     point_cloud: BasicPointCloud
@@ -674,7 +676,7 @@ def readCamerasFromTransforms(path, transformsfile, white_background, extension=
             #                   fid=frame_time, masks=masks, mask_path=masks_path)
             return CameraInfo(uid=idx, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
                               image_path=image_path, image_name=image_name, width=width, height=height,
-                              fid=frame_time, depth=None, sam_mask=sam_mask, mask_feat=mask_feat, cx=cx, cy=cy)
+                              fid=frame_time, depth=None, sam_mask=sam_mask, mask_feat=mask_feat, cx=cx, cy=cy, mask_seg_path=mask_seg_path, mask_feat_path=mask_feat_path)
         elif dataset_type == 'blender':
             ## Blender
             fovy = focal2fov(fov2focal(fovx, width), height)
@@ -700,8 +702,13 @@ def readCamerasFromTransforms(path, transformsfile, white_background, extension=
             
             # masks_path = os.path.join(path, 'masks', frame["file_path"].split('/')[-1] + '.pt')
             # masks_path = os.path.join(path, 'raw_sam_mask', image_name + ".png")
-            mask_seg_path = os.path.join(path, "language_features/" + image_name + "_s.npy")
-            mask_feat_path = os.path.join(path, "language_features/" + image_name + "_f.npy")
+            
+            ## Correct one
+            # mask_seg_path = os.path.join(path, "language_features/" + image_name + "_s.npy")
+            # mask_feat_path = os.path.join(path, "language_features/" + image_name + "_f.npy")
+            ## Below are for the hotfix for wrong filename during preprocessing...
+            mask_seg_path = os.path.join(path, "language_features_new/" + image_name + "_s.npy")
+            mask_feat_path = os.path.join(path, "language_features_new/" + image_name + "_f.npy")
         
             # object_path = os.path.join(path, 'sam_mask', image_name + '.png')
             if load_mask_on_the_fly:
@@ -744,7 +751,7 @@ def readCamerasFromTransforms(path, transformsfile, white_background, extension=
             #                   fid=frame_time, masks=masks, mask_path=masks_path)
             return CameraInfo(uid=idx, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
                               image_path=image_path, image_name=image_name, width=width, height=height,
-                              fid=frame_time, depth=None, sam_mask=sam_mask, mask_feat=mask_feat, cx=cx, cy=cy)
+                              fid=frame_time, depth=None, sam_mask=sam_mask, mask_feat=mask_feat, cx=cx, cy=cy, mask_seg_path=mask_seg_path, mask_feat_path=mask_feat_path)
         else:
             raise NotImplementedError()
              
